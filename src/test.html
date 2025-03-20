@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PUT Request Example</title>
+</head>
+<body>
+
+    <button onclick="updateLoanApplication()">Update Loan</button>
+
+    <script>
+        function updateLoanApplication() {
+            fetch("http://localhost:5001/api/loan-application/update", {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    loanDeveloperAddress: "0x945B56552f2eA00f5779621054f59984d510E29C",
+                    newBalance: "50",
+                    isActive: true
+                })
+            })
+            .then(response => response.json())
+            .then(data => console.log("Success:", data))
+            .catch(error => console.error("Error:", error));
+        }
+    </script>
+
+</body>
+</html>

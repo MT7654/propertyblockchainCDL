@@ -2,16 +2,99 @@ import React, { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import LandRegistryData from "./contracts/LandRegistry.json";
 import LoanBankData from "./contracts/LoanBank.json";
+import { registerLand } from './services/landRegistryServices';
+import { applyLoan } from './services/loanBankService';
 
-// Extract ABIs from the JSON artifacts
+// ---------------------------------------------
+// Data Flow & Key Data Elements
+// ---------------------------------------------
+//
+// 1) Land Registration (Government Officer Only)
+//    Data Flow: 
+//      Government Officer → React App → LandRegistry → React App → Government Officer
+//    Key Data Elements: 
+//      - plotId, metadata, ownership details, NFT token
+//
+// 2) Loan Application (Developer)
+//    Data Flow: 
+//      Developer → React App → Public Bank → React App → LoanBank → React App → Developer
+//    Key Data Elements: 
+//      - loanPrincipal, loanInterest, loanTerm, loanType (approval status, ETH top-up if needed)
+//
+// 3) Land Purchase (Developer)
+//    Data Flow: 
+//      Developer → React App → LandRegistry → React App → Developer
+//    Key Data Elements: 
+//      - plotId, purchasePrice, ownership transfer confirmation
+//
+// 4) Loan Repayment (Developer)
+//    Data Flow: 
+//      Developer → React App → LoanBank → React App → Developer
+//    Key Data Elements: 
+//      - repayAmount, updated loan balance
+//
+// 5) Default Check (Bank Use)
+//    Data Flow: 
+//      Public Bank → React App → LoanBank → React App → (Public Bank & Government Officer)
+//    Key Data Elements: 
+//      - loan balance, overdue status, default notification
+// ---------------------------------------------
+
+// Extract ABIs from JSON artifacts
 const landRegistryABI = LandRegistryData.abi;
 const loanBankABI = LoanBankData.abi;
 
-// Smart contract addresses (update if needed)
-const landRegistryAddress = "0x65F9Ba54F8773d9f066434B6A413f15B35116D2e";
-const loanBankAddress = "0x438f65184C0B0b6cbbd62a9E9682D2A120C10237";
+// Smart contract addresses
+const landRegistryAddress = "0x2fE44996A1ebe626CeCb1B99593075401F46ef7c";
+const loanBankAddress = "0x1738A9dD4aF4958778e56687BB9779f9793F3F55";
+
+// SingaporeHDBBackground Component – renders a full-page scenic SVG background
+const SingaporeHDBBackground = () => (
+  <svg 
+    xmlns="http://www.w3.org/2000/svg" 
+    viewBox="0 0 1200 800" 
+    style={{ width: "100%", height: "100%" }}
+    preserveAspectRatio="xMidYMid slice"
+  >
+    {/* Sky */}
+    <rect width="1200" height="800" fill="#87CEEB" />
+    
+    {/* Background HDB Buildings */}
+    <rect x="0" y="500" width="1200" height="300" fill="#E6E6FA" />
+    
+    {/* Multiple HDB Blocks */}
+    <rect x="50" y="350" width="200" height="400" fill="#F0F8FF" stroke="#4682B4" strokeWidth="5" />
+    <rect x="300" y="300" width="250" height="450" fill="#E0FFFF" stroke="#48D1CC" strokeWidth="5" />
+    <rect x="600" y="375" width="200" height="375" fill="#F0FFF0" stroke="#3CB371" strokeWidth="5" />
+    <rect x="900" y="325" width="250" height="425" fill="#FFF0F5" stroke="#FF69B4" strokeWidth="5" />
+    
+    {/* Windows */}
+    {[50, 300, 600, 900].map((x, buildingIndex) => (
+      Array.from({ length: 10 }, (_, i) => (
+        Array.from({ length: 5 }, (_, j) => (
+          <rect 
+            key={`window-${buildingIndex}-${i}-${j}`} 
+            x={x + 20 + (j * 40)} 
+            y={400 + (i * 30)} 
+            width="30" 
+            height="20" 
+            fill="#FFFFFF" 
+            stroke="#4169E1" 
+            strokeWidth="2" 
+          />
+        ))
+      ))
+    ))}
+  </svg>
+);
 
 function App() {
+  // ---------------------------
+  // USER GROUP STATE: "governmentOfficer", "developer", "bank"
+  // ---------------------------
+  const [userGroup, setUserGroup] = useState("developer");
+
+  // Blockchain state
   const [account, setAccount] = useState(null);
   const [provider, setProvider] = useState(null);
   const [signer, setSigner] = useState(null);
@@ -19,39 +102,67 @@ function App() {
   const [loanBank, setLoanBank] = useState(null);
   const [govOfficer, setGovOfficer] = useState(null);
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState(""); // "success", "error", "info"
 
   // Form state for Land Registration (FR1)
   const [regPlotId, setRegPlotId] = useState("");
   const [regMetadata, setRegMetadata] = useState("");
   const [regOwner, setRegOwner] = useState("");
+  const [regType, setRegType] = useState("HDB");
+  const [regTown, setRegTown] = useState("Ang Mo Kio");
 
   // Form state for Loan Application (FR2)
   const [loanPrincipal, setLoanPrincipal] = useState("");
   const [loanInterest, setLoanInterest] = useState("");
+  const [loanTerm, setLoanTerm] = useState("25");
+  const [loanType, setLoanType] = useState("HDB");
+  const [loanDeveloperAddress, setLoanDeveloperAddress] = useState("");
 
-  // Form state for Land Purchase (FR3) – by providing Plot ID
+  // Form state for Land Purchase (FR3)
   const [purchasePlotId, setPurchasePlotId] = useState("");
+  const [purchasePrice, setPurchasePrice] = useState("");
 
   // Form state for Loan Repayment (FR4)
   const [repayAmount, setRepayAmount] = useState("");
+  const [repaymentMethod, setRepaymentMethod] = useState("CPF");
+  const [repayLoanIndex, setRepayLoanIndex] = useState("");
 
+  // Navigation state
+  const [currentPage, setCurrentPage] = useState("landRegistration");
+  const [isLoading, setIsLoading] = useState(false);
+
+  // HDB towns in Singapore
+  const hdbTowns = [
+    "Ang Mo Kio", "Bedok", "Bishan", "Bukit Batok", "Bukit Merah",
+    "Bukit Panjang", "Bukit Timah", "Central Area", "Choa Chu Kang",
+    "Clementi", "Geylang", "Hougang", "Jurong East", "Jurong West",
+    "Kallang/Whampoa", "Marine Parade", "Pasir Ris", "Punggol",
+    "Queenstown", "Sembawang", "Sengkang", "Serangoon", "Tampines",
+    "Tengah", "Toa Payoh", "Woodlands", "Yishun"
+  ];
+
+  // HDB flat types
+  const hdbTypes = [
+    "2-Room Flexi", "3-Room", "4-Room", "5-Room", "Executive",
+    "Studio Apartment", "DBSS", "Executive Condominium"
+  ];
+
+  // ---------------------------------------------
+  // Load Blockchain Data
+  // ---------------------------------------------
   useEffect(() => {
     async function loadBlockchainData() {
       if (window.ethereum) {
+        setIsLoading(true);
         try {
           const provider = new ethers.providers.Web3Provider(window.ethereum);
           await window.ethereum.request({ method: "eth_requestAccounts" });
           const signer = provider.getSigner();
           const account = await signer.getAddress();
-
           setAccount(account);
           setProvider(provider);
           setSigner(signer);
 
-          console.log("Land Registry ABI:", landRegistryABI);
-          console.log("Loan Bank ABI:", loanBankABI);
-
-          // Initialize smart contract instances using the signer
           const landRegistryContract = new ethers.Contract(
             landRegistryAddress,
             landRegistryABI,
@@ -62,233 +173,829 @@ function App() {
             loanBankABI,
             signer
           );
-
           setLandRegistry(landRegistryContract);
           setLoanBank(loanBankContract);
 
-          // Retrieve the contract owner (Government Officer) from LandRegistry (Ownable)
-          const ownerAddress = await landRegistryContract.owner();
-          setGovOfficer(ownerAddress);
+          try {
+            const ownerAddress = await landRegistryContract.owner();
+            setGovOfficer(ownerAddress);
+            showMessage("Connected to blockchain system successfully", "success");
+          } catch (error) {
+            console.error("Owner() call failed:", error);
+            setGovOfficer(null);
+            showMessage("Connected, but couldn't verify Government Officer role", "info");
+          }
         } catch (error) {
           console.error("Error loading blockchain data:", error);
-          alert("Error connecting to blockchain. Please try again.");
+          showMessage("Error connecting to blockchain. Please check your MetaMask connection.", "error");
+        } finally {
+          setIsLoading(false);
         }
       } else {
-        alert("Please install MetaMask!");
+        showMessage("Please install MetaMask to access services", "error");
       }
     }
     loadBlockchainData();
   }, []);
 
-  // FR1: Land Registration (Government Officer)
-  async function handleRegisterLand(e) {
-    e.preventDefault();
-    try {
-      const plotId = parseInt(regPlotId, 10);
-      // This function call will revert if the caller is not the owner.
-      const tx = await landRegistry.registerLand(plotId, regMetadata, regOwner);
-      await tx.wait();
-      alert("Land registered successfully and NFT issued!");
-      setMessage("Land registered successfully!");
-    } catch (error) {
-      console.error(error);
-      alert("Land registration failed. Ensure you are using the Government Officer account.");
-      setMessage("Land registration failed.");
+  // ---------------------------------------------
+  // Helper: Show Message
+  // ---------------------------------------------
+  function showMessage(msg, type = "info") {
+    setMessage(msg);
+    setMessageType(type);
+    if (type !== "error") {
+      setTimeout(() => {
+        setMessage("");
+        setMessageType("");
+      }, 5000);
     }
   }
 
-  // FR2: Loan Application (Developer)
+  // ---------------------------------------------
+  // Handlers for Each Functional Requirement
+  // ---------------------------------------------
+
+// Land Registration (Government Officer Only)
+async function handleRegisterLand(e) {
+  e.preventDefault();
+  console.log("handleRegisterLand triggered");
+  setIsLoading(true);
+  try {
+    const plotId = parseInt(regPlotId, 10);
+    console.log("Parsed plotId:", plotId);
+    const enhancedMetadata = JSON.stringify({
+      description: regMetadata,
+      town: regTown,
+      flatType: regType,
+      registrationDate: new Date().toISOString()
+    });
+    console.log("Enhanced metadata:", enhancedMetadata);
+    
+    // Now call the service function to log the registration to backend
+    const result = await registerLand(plotId, enhancedMetadata, regOwner);
+    console.log("Backend logging result:", result);
+    
+    showMessage(`Unit ${regType} in ${regTown} registered successfully with NFT issuance`, "success");
+    setRegPlotId("");
+    setRegMetadata("");
+  } catch (error) {
+    console.error("Error during registration:", error);
+    // Check if error message indicates duplicate registration
+    if (error.message && error.message.includes("Land already registered")) {
+      showMessage("Registration failed: This land unit is already registered.", "error");
+    } else {
+      showMessage("Land registration failed. Only authorized Government Officers can register property.", "error");
+    }
+  } finally {
+    setIsLoading(false);
+    console.log("handleRegisterLand completed");
+  }
+}
+
+
+
+
+  // Loan Application (Developer)
   async function handleApplyForLoan(e) {
     e.preventDefault();
+    setIsLoading(true);
     try {
       const principal = parseInt(loanPrincipal, 10);
       const interestRate = parseFloat(loanInterest);
-      const tx = await loanBank.createLoan(principal, interestRate);
-      await tx.wait();
-      alert("Loan applied successfully! (Awaiting Public Bank approval)");
-      setMessage("Loan applied successfully!");
+      console.log({
+        loanType,
+        loanTerm,
+        applicant: account,
+        developerAddress: loanDeveloperAddress,
+        applicationDate: new Date().toISOString()
+      });
+      // const tx = await loanBank.createLoan(principal, interestRate);
+      // await tx.wait();
+      // Pass the developer's address (account) as an extra parameter to applyLoan
+      const result = await applyLoan(principal, interestRate, loanDeveloperAddress);
+      console.log("Backend logging result:", result);
+
+      showMessage(`${loanType} loan application for $${principal} submitted successfully. Awaiting bank approval.`, "success");
+      setLoanPrincipal("");
+      setLoanInterest("");
     } catch (error) {
       console.error(error);
-      alert("Loan application failed.");
-      setMessage("Loan application failed.");
+      showMessage("Loan application failed. Please check your eligibility and try again.", "error");
+    } finally {
+      setIsLoading(false);
     }
   }
 
-  // FR3: Land Purchase (Developer)
+  // Land Purchase (Developer)
   async function handlePurchaseLand(e) {
     e.preventDefault();
+    setIsLoading(true);
     try {
       const plotId = parseInt(purchasePlotId, 10);
+      console.log({
+        plotId,
+        purchasePrice,
+        purchaseDate: new Date().toISOString(),
+        buyer: account
+      });
       const tx = await landRegistry.purchaseLand(plotId);
       await tx.wait();
-      alert("Land purchased successfully!");
-      setMessage("Land purchased successfully!");
+      showMessage(`Land unit #${plotId} purchased successfully! Ownership transferred to your account.`, "success");
+      setPurchasePlotId("");
+      setPurchasePrice("");
     } catch (error) {
       console.error(error);
-      alert("Land purchase failed.");
-      setMessage("Land purchase failed.");
+      showMessage("Property purchase failed. Please verify the unit is available for sale.", "error");
+    } finally {
+      setIsLoading(false);
     }
   }
 
-  // FR4: Loan Repayment (Developer)
-  async function handleRepayLoan(e) {
-    e.preventDefault();
-    try {
-      const amount = parseInt(repayAmount, 10);
-      const tx = await loanBank.repayLoan(amount);
-      await tx.wait();
-      alert("Loan repaid successfully!");
-      setMessage("Loan repaid successfully!");
-    } catch (error) {
-      console.error(error);
-      // Check if the error message includes "No active loan"
-      if (
-        error.data &&
-        error.data.message &&
-        error.data.message.includes("No active loan")
-      ) {
-        alert("No active loan found. Please ensure you have an active loan before repaying.");
-        setMessage("No active loan found.");
-      } else {
-        alert("Loan repayment failed.");
-        setMessage("Loan repayment failed.");
-      }
+  // Loan Repayment (Developer)
+async function handleRepayLoan(e) {
+  e.preventDefault();
+  setIsLoading(true);
+  try {
+    const amount = parseInt(repayAmount, 10);
+    // Assume repayLoanIndex is a state variable holding the loan index to repay
+    console.log({
+      repaymentMethod,
+      amount,
+      repaymentDate: new Date().toISOString(),
+      payer: account,
+      loanIndex: repayLoanIndex
+    });
+    // Call the updated service function which now accepts a loan index.
+    const result = await repayLoan(repayLoanIndex, amount);
+    console.log("Repayment result:", result);
+    showMessage(`Loan repayment of $${amount} via ${repaymentMethod} processed successfully!`, "success");
+    setRepayAmount("");
+  } catch (error) {
+    console.error(error);
+    if (error.data && error.data.message && error.data.message.includes("No active loan")) {
+      showMessage("No active loan found. Please ensure you have an active loan before repaying.", "error");
+    } else {
+      showMessage("Loan repayment failed. Please check your account balance.", "error");
     }
+  } finally {
+    setIsLoading(false);
   }
-  
+}
 
-  // FR5: Default Check (Public Bank)
+
+  // Default Check (Bank Use)
   async function handleCheckDefault(e) {
     e.preventDefault();
+    setIsLoading(true);
     try {
       const tx = await loanBank.checkDefault(account);
       await tx.wait();
-      alert("Default check completed! Notifications sent to Public Bank & Government Officer.");
-      setMessage("Default check completed!");
+      showMessage("Default check completed! Notifications sent to Public Bank & Government Officer.", "success");
     } catch (error) {
       console.error(error);
-      alert("Default check failed.");
-      setMessage("Default check failed.");
+      showMessage("Default check failed. Please try again later.", "error");
+    } finally {
+      setIsLoading(false);
     }
   }
 
-  return (
-    <div style={{ padding: "20px" }}>
-      <h1>Land & Loan Management</h1>
-      <p>
-        <strong>Connected Account:</strong> {account}
-      </p>
-      {govOfficer && (
-        <p>
-          <strong>Government Officer (Contract Owner):</strong> {govOfficer}
-        </p>
-      )}
-      {message && <p>{message}</p>}
+  // ---------------------------------------------
+  // Navigation Functions
+  // ---------------------------------------------
+  function goToNextPage() {
+    if (currentPage === "landRegistration") setCurrentPage("loanApplication");
+    else if (currentPage === "loanApplication") setCurrentPage("landPurchase");
+    else if (currentPage === "landPurchase") setCurrentPage("loanRepayment");
+    else if (currentPage === "loanRepayment") setCurrentPage("defaultCheck");
+  }
 
-      <hr />
-      <h2>Land Registration (Government Officer)</h2>
-      {account && govOfficer && account.toLowerCase() === govOfficer.toLowerCase() ? (
-        <form onSubmit={handleRegisterLand}>
-          <div>
-            <label>Plot ID: </label>
+  function goToPreviousPage() {
+    if (currentPage === "defaultCheck") setCurrentPage("loanRepayment");
+    else if (currentPage === "loanRepayment") setCurrentPage("landPurchase");
+    else if (currentPage === "landPurchase") setCurrentPage("loanApplication");
+    else if (currentPage === "loanApplication") setCurrentPage("landRegistration");
+  }
+
+  // ---------------------------------------------
+  // Tabs Based on User Group
+  // ---------------------------------------------
+  function getAvailableTabs() {
+    if (userGroup === "governmentOfficer") {
+      return { landRegistration: "Land Registration" };
+    }
+    if (userGroup === "developer") {
+      return {
+        loanApplication: "Land Loan Application",
+        landPurchase: "Land Purchase",
+        loanRepayment: "Loan Repayment"
+      };
+    }
+    if (userGroup === "bank") {
+      return { defaultCheck: "Default Verification" };
+    }
+    return {
+      loanApplication: "Land Loan Application",
+      landPurchase: "Land Purchase",
+      loanRepayment: "Loan Repayment"
+    };
+  }
+
+  // Render Tabs Navigation
+  function renderTabs() {
+    const availableTabs = getAvailableTabs();
+    const tabEntries = Object.entries(availableTabs);
+    if (!Object.keys(availableTabs).includes(currentPage)) {
+      setCurrentPage(tabEntries[0][0]);
+    }
+    return (
+      <div style={tabsContainerStyle}>
+        {tabEntries.map(([page, title]) => (
+          <div
+            key={page}
+            style={tabStyle(currentPage === page)}
+            onClick={() => setCurrentPage(page)}
+          >
+            {title}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ---------------------------------------------
+  // Render Page Content Based on Current Tab
+  // ---------------------------------------------
+  function renderPageContent() {
+    switch (currentPage) {
+      case "landRegistration":
+        return renderLandRegistration();
+      case "loanApplication":
+        return renderLoanApplication();
+      case "landPurchase":
+        return renderLandPurchase();
+      case "loanRepayment":
+        return renderLoanRepayment();
+      case "defaultCheck":
+        return renderDefaultCheck();
+      default:
+        return <div>Page not found</div>;
+    }
+  }
+
+  // Separate render functions for clarity
+  function renderLandRegistration() {
+    return (
+      <div style={sectionStyle}>
+        <h2>Land Registration (Officer Only)</h2>
+        <p style={{ color: "#666", marginBottom: "20px" }}>
+          Register new land units and assign ownership through secure blockchain NFTs.
+        </p>
+        {account &&
+        govOfficer &&
+        account.toLowerCase() === govOfficer.toLowerCase() ? (
+          <form onSubmit={handleRegisterLand}>
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Land Number / Plot ID</label>
+              <input
+                type="number"
+                value={regPlotId}
+                onChange={(e) => setRegPlotId(e.target.value)}
+                placeholder="Enter Land Number"
+                style={inputStyle}
+                required
+              />
+            </div>
+            <div style={{ display: "flex", gap: "20px" }}>
+              <div style={{ ...formGroupStyle, flex: 1 }}>
+                <label style={labelStyle}>HDB Town</label>
+                <select
+                  value={regTown}
+                  onChange={(e) => setRegTown(e.target.value)}
+                  style={selectStyle}
+                  required
+                >
+                  {hdbTowns.map((town) => (
+                    <option key={town} value={town}>
+                      {town}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ ...formGroupStyle, flex: 1 }}>
+                <label style={labelStyle}>Flat Type</label>
+                <select
+                  value={regType}
+                  onChange={(e) => setRegType(e.target.value)}
+                  style={selectStyle}
+                  required
+                >
+                  {hdbTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Property Details</label>
+              <input
+                type="text"
+                value={regMetadata}
+                onChange={(e) => setRegMetadata(e.target.value)}
+                placeholder="Enter details (e.g. floor area, block number, storey)"
+                style={inputStyle}
+                required
+              />
+            </div>
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Registered Owner's Address</label>
+              <input
+                type="text"
+                value={regOwner}
+                onChange={(e) => setRegOwner(e.target.value)}
+                placeholder="Enter owner's Ethereum address"
+                style={inputStyle}
+                required
+              />
+            </div>
+            <button type="submit" style={buttonStyle}>
+              Register Land Unit & Issue NFT
+            </button>
+          </form>
+        ) : (
+          <div style={{ color: "#721c24", background: "#f8d7da", padding: "15px", borderRadius: "5px" }}>
+            <p>
+              <strong>Access Restricted:</strong> Only authorized Government Officers can register units.
+            </p>
+            <p style={{ marginTop: "10px" }}>
+              Please login with the appropriate credentials to access this function.
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderLoanRepayment() {
+    return (
+      <div style={sectionStyle}>
+        <h2>Land Loan Repayment</h2>
+        <p style={{ color: "#666", marginBottom: "20px" }}>
+          Make secure loan repayments towards your land loan.
+        </p>
+        <form onSubmit={handleRepayLoan}>
+        <div style={formGroupStyle}>
+          <label style={labelStyle}>Loan Index</label>
+          <input
+            type="number"
+            value={repayLoanIndex}
+            onChange={(e) => setRepayLoanIndex(e.target.value)}
+            placeholder="Enter loan index"
+            style={inputStyle}
+            required
+          />
+          </div>
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Repayment Method</label>
+            <select
+              value={repaymentMethod}
+              onChange={(e) => setRepaymentMethod(e.target.value)}
+              style={selectStyle}
+              required
+            >
+              <option value="CPF">CPF Ordinary Account</option>
+              <option value="Cash">Cash</option>
+              <option value="GIRO">GIRO</option>
+              <option value="Bank">Bank Transfer</option>
+            </select>
+          </div>
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Repayment Amount (SGD)</label>
             <input
               type="number"
-              value={regPlotId}
-              onChange={(e) => setRegPlotId(e.target.value)}
-              placeholder="Enter Plot ID"
+              value={repayAmount}
+              onChange={(e) => setRepayAmount(e.target.value)}
+              placeholder="Enter repayment amount"
+              style={inputStyle}
               required
             />
           </div>
-          <div>
-            <label>Metadata: </label>
-            <input
-              type="text"
-              value={regMetadata}
-              onChange={(e) => setRegMetadata(e.target.value)}
-              placeholder="Enter Metadata"
-              required
-            />
-          </div>
-          <div>
-            <label>Owner Address: </label>
-            <input
-              type="text"
-              value={regOwner}
-              onChange={(e) => setRegOwner(e.target.value)}
-              placeholder="Enter Owner Address"
-              required
-            />
-          </div>
-          <button type="submit">Register Land</button>
+          <button type="submit" style={buttonStyle}>
+            Process Repayment
+          </button>
         </form>
-      ) : (
-        <p style={{ color: "red" }}>
-          Only the Government Officer (contract owner) can register land.
+      </div>
+    );
+  }
+
+  function renderLandPurchase() {
+    return (
+      <div style={sectionStyle}>
+        <h2>Land Unit Purchase</h2>
+        <p style={{ color: "#666", marginBottom: "20px" }}>
+          Purchase land units with secure blockchain verification of ownership transfer.
         </p>
-      )}
+        <form onSubmit={handlePurchaseLand}>
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Land Unit Number / Plot ID</label>
+            <input
+              type="number"
+              value={purchasePlotId}
+              onChange={(e) => setPurchasePlotId(e.target.value)}
+              placeholder="Enter the land unit number to purchase"
+              style={inputStyle}
+              required
+            />
+          </div>
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Purchase Price (SGD)</label>
+            <input
+              type="number"
+              value={purchasePrice}
+              onChange={(e) => setPurchasePrice(e.target.value)}
+              placeholder="Enter the purchase price"
+              style={inputStyle}
+              required
+            />
+          </div>
+          <div style={{ background: "#e2f7e2", padding: "15px", borderRadius: "8px", marginBottom: "20px" }}>
+            <p style={{ margin: 0, color: "#2d632d" }}>
+              <strong>Note:</strong> Purchasing this land unit will transfer the NFT ownership to your wallet.
+              Make sure you have sufficient funds and approvals in place.
+            </p>
+          </div>
+          <button type="submit" style={buttonStyle}>
+            Complete Purchase Transaction
+          </button>
+        </form>
+      </div>
+    );
+  }
 
-      <hr />
-      <h2>Loan Application (Developer)</h2>
-      <form onSubmit={handleApplyForLoan}>
-        <div>
-          <label>Principal (ETH): </label>
-          <input
-            type="number"
-            value={loanPrincipal}
-            onChange={(e) => setLoanPrincipal(e.target.value)}
-            placeholder="Enter Principal"
-            required
-          />
-        </div>
-        <div>
-          <label>Interest Rate (%): </label>
-          <input
-            type="number"
-            step="0.1"
-            value={loanInterest}
-            onChange={(e) => setLoanInterest(e.target.value)}
-            placeholder="Enter Interest Rate"
-            required
-          />
-        </div>
-        <button type="submit">Apply for Loan</button>
-      </form>
+  function renderLoanApplication() {
+    return (
+      <div style={sectionStyle}>
+        <h2>Land Loan Application</h2>
+        <p style={{ color: "#666", marginBottom: "20px" }}>
+          Apply for land loans with competitive interest rates and flexible terms.
+        </p>
+        <form onSubmit={handleApplyForLoan}>
+          <div style={{ display: "flex", gap: "20px" }}>
+            <div style={{ ...formGroupStyle, flex: 1 }}>
+              <label style={labelStyle}>Loan Type</label>
+              <select
+                value={loanType}
+                onChange={(e) => setLoanType(e.target.value)}
+                style={selectStyle}
+                required
+              >
+                <option value="HDB">Land Loan</option>
+                <option value="Bank">Bank Loan</option>
+                <option value="BTO">BTO Financing</option>
+                <option value="Resale">Resale Land Loan</option>
+              </select>
+            </div>
+            <div style={{ ...formGroupStyle, flex: 1 }}>
+              <label style={labelStyle}>Loan Term (Years)</label>
+              <select
+                value={loanTerm}
+                onChange={(e) => setLoanTerm(e.target.value)}
+                style={selectStyle}
+                required
+              >
+                <option value="5">5 years</option>
+                <option value="10">10 years</option>
+                <option value="15">15 years</option>
+                <option value="20">20 years</option>
+                <option value="25">25 years</option>
+                <option value="30">30 years</option>
+              </select>
+            </div>
+          </div>
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Loan Amount (SGD)</label>
+            <input
+              type="number"
+              value={loanPrincipal}
+              onChange={(e) => setLoanPrincipal(e.target.value)}
+              placeholder="Enter loan principal amount"
+              style={inputStyle}
+              required
+            />
+          </div>
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Interest Rate (%)</label>
+            <input
+              type="number"
+              step="0.1"
+              value={loanInterest}
+              onChange={(e) => setLoanInterest(e.target.value)}
+              placeholder="Enter interest rate"
+              style={inputStyle}
+              required
+            />
+            <small style={{ color: "#666", marginTop: "5px", display: "block" }}>
+              Concessionary loan rate is currently 2.6% p.a.
+            </small>
+          </div>
+          {/* New input for Developer Address */}
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Developer Address</label>
+            <input
+              type="text"
+              value={loanDeveloperAddress}
+              onChange={(e) => setLoanDeveloperAddress(e.target.value)}
+              placeholder="Enter your Ethereum address"
+              style={inputStyle}
+              required
+            />
+          </div>
+          <button type="submit" style={buttonStyle}>
+            Submit Loan Application
+          </button>
+        </form>
+      </div>
+    );
+  }
+  
 
-      <hr />
-      <h2>Land Purchase (Developer)</h2>
-      <form onSubmit={handlePurchaseLand}>
-        <div>
-          <label>Plot ID: </label>
-          <input
-            type="number"
-            value={purchasePlotId}
-            onChange={(e) => setPurchasePlotId(e.target.value)}
-            placeholder="Enter Plot ID to Purchase"
-            required
-          />
-        </div>
-        <button type="submit">Purchase Land</button>
-      </form>
 
-      <hr />
-      <h2>Loan Repayment (Developer)</h2>
-      <form onSubmit={handleRepayLoan}>
-        <div>
-          <label>Repayment Amount (ETH): </label>
-          <input
-            type="number"
-            value={repayAmount}
-            onChange={(e) => setRepayAmount(e.target.value)}
-            placeholder="Enter Repayment Amount"
-            required
-          />
+  function renderDefaultCheck() {
+    return (
+      <div style={sectionStyle}>
+        <h2>Loan Default Verification (Bank Use)</h2>
+        <p style={{ color: "#666", marginBottom: "20px" }}>
+          Bank officers can verify loan status and check for defaults. Notifications will be sent to relevant parties.
+        </p>
+        <div style={{ background: "#f9f2ec", padding: "15px", borderRadius: "8px", marginBottom: "20px" }}>
+          <p style={{ margin: 0, color: "#8b572a" }}>
+            <strong>Important:</strong> This function should only be used by authorized bank personnel.
+            Default notifications will be sent to both the Government Officer and the borrower.
+          </p>
         </div>
-        <button type="submit">Repay Loan</button>
-      </form>
+        <button onClick={handleCheckDefault} style={buttonStyle}>
+          Verify Loan Status
+        </button>
+      </div>
+    );
+  }
 
-      <hr />
-      <h2>Default Check (Public Bank)</h2>
-      <button onClick={handleCheckDefault}>Check Default</button>
+  // ---------------------------------------------
+  // Styling Objects (Updated with red accent #cc0001)
+  // ---------------------------------------------
+  const containerStyle = {
+    fontFamily: "'Inter', 'Roboto', sans-serif",
+    maxWidth: "1200px",
+    margin: "20px auto",
+    padding: "30px",
+    background: "#f8f9fa",
+    borderRadius: "12px",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.1)",
+    position: "relative",
+    zIndex: 10
+  };
+
+  const headerStyle = {
+    textAlign: "center",
+    marginBottom: "30px"
+  };
+
+  const sectionStyle = {
+    background: "#ffffff",
+    padding: "25px",
+    marginBottom: "25px",
+    borderRadius: "10px",
+    boxShadow: "0 3px 8px rgba(0,0,0,0.08)",
+    borderLeft: "5px solid #cc0001"
+  };
+
+  const formGroupStyle = { marginBottom: "18px" };
+
+  const labelStyle = {
+    display: "block",
+    marginBottom: "8px",
+    color: "#444",
+    fontWeight: "500"
+  };
+
+  const inputStyle = {
+    width: "100%",
+    padding: "12px",
+    borderRadius: "6px",
+    border: "1px solid #ddd",
+    fontSize: "16px",
+    transition: "border-color 0.3s"
+  };
+
+  const selectStyle = {
+    ...inputStyle,
+    height: "48px",
+    backgroundColor: "#fff"
+  };
+
+  const buttonStyle = {
+    padding: "12px 24px",
+    background: "#cc0001",
+    color: "#fff",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    marginRight: "12px",
+    fontSize: "16px",
+    fontWeight: "500",
+    transition: "background 0.3s"
+  };
+
+  const secondaryButtonStyle = { ...buttonStyle, background: "#718093" };
+
+  const navButtonContainerStyle = {
+    display: "flex",
+    justifyContent: "center",
+    gap: "15px",
+    marginTop: "30px"
+  };
+
+  const messageContainerStyle = {
+    padding: "12px 20px",
+    borderRadius: "8px",
+    marginBottom: "20px",
+    fontSize: "16px",
+    fontWeight: "500",
+    backgroundColor:
+      messageType === "success"
+        ? "#d4edda"
+        : messageType === "error"
+        ? "#f8d7da"
+        : messageType === "info"
+        ? "#cce5ff"
+        : "transparent",
+    color:
+      messageType === "success"
+        ? "#155724"
+        : messageType === "error"
+        ? "#721c24"
+        : messageType === "info"
+        ? "#004085"
+        : "#333",
+    border: messageType ? "1px solid" : "none",
+    borderColor:
+      messageType === "success"
+        ? "#c3e6cb"
+        : messageType === "error"
+        ? "#f5c6cb"
+        : messageType === "info"
+        ? "#b8daff"
+        : "transparent",
+    display: message ? "block" : "none"
+  };
+
+  const accountInfoStyle = {
+    background: "#e2e8f0",
+    padding: "15px",
+    borderRadius: "8px",
+    marginBottom: "25px",
+    fontSize: "14px"
+  };
+
+  const tabsContainerStyle = {
+    display: "flex",
+    marginBottom: "25px",
+    borderBottom: "1px solid #ddd",
+    overflowX: "auto"
+  };
+
+  const tabStyle = (isActive) => ({
+    padding: "12px 24px",
+    cursor: "pointer",
+    borderBottom: isActive ? "3px solid #cc0001" : "none",
+    color: isActive ? "#cc0001" : "#718093",
+    fontWeight: isActive ? "600" : "400",
+    transition: "all 0.3s"
+  });
+
+  const loadingOverlayStyle = {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255, 255, 255, 0.8)",
+    display: isLoading ? "flex" : "none",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000
+  };
+
+  const spinnerStyle = {
+    border: "5px solid #f3f3f3",
+    borderTop: "5px solid #cc0001",
+    borderRadius: "50%",
+    width: "50px",
+    height: "50px",
+    animation: "spin 1s linear infinite"
+  };
+
+  const userGroupStyle = {
+    marginBottom: "15px",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    fontSize: "16px"
+  };
+
+  // ---------------------------------------------
+  // Main Render
+  // ---------------------------------------------
+  return (
+    <div style={{ position: "relative", width: "100%", minHeight: "100vh", background: "#fff" }}>
+      {/* Full Website Background */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, opacity: 0.1, zIndex: 0 }}>
+        <SingaporeHDBBackground />
+      </div>
+      {/* Main Application Container */}
+      <div style={containerStyle}>
+        <div style={loadingOverlayStyle}>
+          <div style={spinnerStyle}></div>
+        </div>
+  
+        {/* Header & User Group Selection */}
+        <div style={{ textAlign: "center", marginBottom: "30px" }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
+            {/* Approximate Logo */}
+            <svg width="60" height="60" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+              <rect x="10" y="10" width="80" height="80" rx="10" ry="10" stroke="#cc0001" strokeWidth="5" fill="white" />
+              <polygon points="50,20 20,50 35,50 35,75 65,75 65,50 80,50" fill="#cc0001" />
+              <rect x="45" y="50" width="10" height="25" fill="white" />
+            </svg>
+            <h1 style={{ margin: 0, fontSize: "24px", fontWeight: "bold", color: "#000" }}>
+              Government Land System
+            </h1>
+          </div>
+          {/* User Group Dropdown */}
+          <div style={userGroupStyle}>
+            <label htmlFor="userGroup"><strong>User Group:</strong></label>
+            <select
+              id="userGroup"
+              value={userGroup}
+              onChange={(e) => setUserGroup(e.target.value)}
+              style={{ padding: "8px", fontSize: "16px" }}
+            >
+              <option value="governmentOfficer">Government Officer</option>
+              <option value="developer">Developer</option>
+              <option value="bank">Bank</option>
+            </select>
+          </div>
+        </div>
+  
+        <div style={accountInfoStyle}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <strong>Connected Account:</strong>{" "}
+              {account ? `${account.substring(0, 6)}...${account.substring(account.length - 4)}` : "Not connected"}
+              {govOfficer && account && govOfficer.toLowerCase() === account.toLowerCase() && (
+                <span style={{ marginLeft: "10px", background: "#cc0001", color: "white", padding: "3px 8px", borderRadius: "4px", fontSize: "12px" }}>
+                  Government Officer
+                </span>
+              )}
+            </div>
+            <div>
+              <span style={{
+                display: "inline-block",
+                width: "10px",
+                height: "10px",
+                backgroundColor: account ? "#4cd137" : "#718093",
+                borderRadius: "50%",
+                marginRight: "5px"
+              }}></span>
+              {account ? "Connected to Blockchain" : "Disconnected"}
+            </div>
+          </div>
+        </div>
+  
+        {message && <div style={messageContainerStyle}>{message}</div>}
+  
+        {/* Tabs based on the selected user group */}
+        {renderTabs()}
+  
+        {/* Render the content for the current tab */}
+        {renderPageContent()}
+  
+        <div style={navButtonContainerStyle}>
+          <button onClick={goToPreviousPage} style={secondaryButtonStyle}>
+            Previous
+          </button>
+          <button onClick={goToNextPage} style={buttonStyle}>
+            Next
+          </button>
+        </div>
+  
+        <div style={{ marginTop: "40px", textAlign: "center", color: "#718093", fontSize: "14px" }}>
+          <p>Government Land System © {new Date().getFullYear()}</p>
+          <p>Secured by Blockchain Technology</p>
+        </div>
+      </div>
     </div>
   );
 }

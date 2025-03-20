@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { purchaseLand } from '/Users/rashidrasool/Library/CloudStorage/OneDrive-NanyangTechnologicalUniversity/reactAPP/src/services/landRegistryServices.js';
+import { approvePurchase, purchaseLand } from '../services/landRegistryServices';
 
 function LandPurchase() {
   const [plotId, setPlotId] = useState('');
@@ -7,6 +7,11 @@ function LandPurchase() {
 
   const handlePurchase = async () => {
     try {
+      // First, send an approval transaction.
+      const approvalTx = await approvePurchase(plotId);
+      await approvalTx.wait(); // Wait for the approval to be confirmed.
+
+      // Once approved, execute the purchase transaction.
       const result = await purchaseLand(plotId);
       setMessage(`Land purchase successful. Details: ${JSON.stringify(result)}`);
     } catch (error) {
