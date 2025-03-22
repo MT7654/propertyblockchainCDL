@@ -5,8 +5,9 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract LoanBank {
-// Use SafeMath for uint256
-using SafeMath for uint256;
+        // Use SafeMath for uint256
+        using SafeMath for uint256;
+
         struct Loan {
         uint256 principal;
         uint256 interestRate; // e.g. as a percentage
