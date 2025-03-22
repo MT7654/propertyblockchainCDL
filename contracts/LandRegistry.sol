@@ -3,12 +3,16 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+// Import SafeMath from OpenZeppelin
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract LandRegistry is ERC721, Ownable {
-    struct Land {
-        uint256 plotId;
-        string metadata;
-        address currentOwner;
+    // Use SafeMath for uint256
+    using SafeMath for uint256;
+        struct Land {
+            uint256 plotId;
+            string metadata;
+            address currentOwner;
     }
     
     uint256 public nextTokenId;
