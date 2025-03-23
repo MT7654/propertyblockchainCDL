@@ -87,6 +87,19 @@ app.post('/api/loan-application', async (req, res) => {
 
 // add more endpoints for land purchase, loan repayment, etc.
 // Express example
+app.get('/api/bloans', async (req, res) => {
+  try {
+    const { account } = req.query;
+    // Query your database for loans matching this account.
+    // Assume LoanApplication is your Mongoose model.
+    const loans = await LoanApplication.find({ borrowerAddress: account });
+    res.status(200).json(loans);
+  } catch (error) {
+    console.error("Error fetching loans:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/loans', async (req, res) => {
   try {
     const { account } = req.query;

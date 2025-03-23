@@ -1,8 +1,6 @@
 import { ethers } from 'ethers';
 import landRegistryArtifact from '../contracts/LandRegistry.json'; 
 
-// Update with your deployed LandRegistry contract address.
-const landRegistryAddress = "0x74aF28Bc42C3967b00d72c59053F144207503607";
 
 // Explicitly set network details for Ganache (chainId may vary)
 const provider = new ethers.providers.JsonRpcProvider("http://127.0.0.1:7545", { chainId: 1337, name: 'ganache' });
@@ -14,6 +12,17 @@ provider.resolveName = async (name) => {
   }
   return null;
 };
+
+// Extract ABI and dynamic address based on network ID
+const landRegistryABI = landRegistryArtifact.abi;
+const networkId = "1337"; // Ganache's default chainId
+
+// Get contract address from artifact networks
+const landRegistryAddress = landRegistryArtifact.networks?.[networkId]?.address;
+
+if (!landRegistryAddress) {
+  throw new Error(`LandRegistry contract not deployed on network ${networkId}`);
+}
 
 const signer = provider.getSigner();
 const landRegistryContract = new ethers.Contract(

@@ -3,423 +3,44 @@ import { ethers } from "ethers";
 import LandRegistryData from "./contracts/LandRegistry.json";
 import LoanBankData from "./contracts/LoanBank.json";
 import { registerLand } from './services/landRegistryServices';
-import { applyLoan, repayLoan } from './services/loanBankService';
-
-// Smart contract addresses
-const landRegistryAddress = "0x74aF28Bc42C3967b00d72c59053F144207503607";
-const loanBankAddress = "0x690c17B342043aC5682979D0a40f6ba6AE6d2Ca6";
-
-// Extract ABIs from JSON artifacts
-const landRegistryABI = LandRegistryData.abi;
-const loanBankABI = LoanBankData.abi;
-
-// Styling Objects
-const containerStyle = {
-  maxWidth: "800px",
-  margin: "0 auto",
-  padding: "20px",
-  fontFamily: "'Inter', 'Roboto', sans-serif",
-  backgroundColor: "rgba(255, 255, 255, 0.9)", 
-  borderRadius: "12px",
-  boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-  position: "relative",
-  zIndex: 1,
-};
-
-const headerStyle = {
-  textAlign: "center",
-  marginBottom: "30px",
-  color: "#1a1a1a",
-};
-
-const formStyle = {
-  backgroundColor: "#ffffff",
-  padding: "20px",
-  borderRadius: "8px",
-  boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
-  marginBottom: "20px",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "10px",
-  marginBottom: "15px",
-  borderRadius: "6px",
-  border: "1px solid #e2e8f0",
-  fontSize: "16px",
-  transition: "border-color 0.3s",
-};
-
-const buttonStyle = {
-  width: "100%",
-  padding: "12px",
-  backgroundColor: "#cc0001",
-  color: "#ffffff",
-  border: "none",
-  borderRadius: "6px",
-  fontSize: "16px",
-  fontWeight: "500",
-  cursor: "pointer",
-  transition: "background-color 0.3s",
-};
-
-const messageStyle = (type) => ({
-  padding: "10px",
-  marginBottom: "20px",
-  borderRadius: "6px",
-  backgroundColor: type === "error" ? "#ffebee" : "#e8f5e9",
-  color: type === "error" ? "#c62828" : "#2e7d32",
-  border: `1px solid ${type === "error" ? "#c62828" : "#2e7d32"}`,
-});
-
-const loadingOverlayStyle = {
-  position: "fixed",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  backgroundColor: "rgba(255, 255, 255, 0.8)",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 1000,
-};
-
-const spinnerStyle = {
-  border: "5px solid #f3f3f3",
-  borderTop: "5px solid #cc0001",
-  borderRadius: "50%",
-  width: "50px",
-  height: "50px",
-  animation: "spin 1s linear infinite",
-};
-
-const backgroundStyle = {
-  position: "fixed",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  backgroundImage: "url('https://images.unsplash.com/photo-1579621970588-a35d0e7ab9b6?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D')",
-  backgroundSize: "cover",
-  backgroundPosition: "center",
-  zIndex: -1,
-};
-
-function App() {
-  // Blockchain state
-  const [account, setAccount] = useState(null);
-  const [provider, setProvider] = useState(null);
-  const [signer, setSigner] = useState(null);
-  const [landRegistry, setLandRegistry] = useState(null);
-  const [loanBank, setLoanBank] = useState(null);
-  const [govOfficer, setGovOfficer] = useState(null);
-  const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState(""); // "success", "error", "info"
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Form state for Land Registration
-  const [regPlotId, setRegPlotId] = useState("");
-  const [regMetadata, setRegMetadata] = useState("");
-  const [regOwner, setRegOwner] = useState("");
-
-  // Form state for Loan Application
-  const [loanPrincipal, setLoanPrincipal] = useState("");
-  const [loanInterest, setLoanInterest] = useState("");
-  const [loanDeveloperAddress, setLoanDeveloperAddress] = useState("");
-
-  // Form state for Loan Repayment
-  const [repayAmount, setRepayAmount] = useState("");
-  const [repayDeveloperAddress, setRepayDeveloperAddress] = useState("");
-
-  // ---------------------------------------------
-  // Load Blockchain Data
-  // ---------------------------------------------
-  useEffect(() => {
-    async function loadBlockchainData() {
-      if (window.ethereum) {
-        setIsLoading(true);
-        try {
-          const provider = new ethers.providers.Web3Provider(window.ethereum);
-          await window.ethereum.request({ method: "eth_requestAccounts" });
-          const signer = provider.getSigner();
-          const account = await signer.getAddress();
-
-          setAccount(account);
-          setProvider(provider);
-          setSigner(signer);
-
-          const landRegistryContract = new ethers.Contract(
-            landRegistryAddress,
-            landRegistryABI,
-            signer
-          );
-          const loanBankContract = new ethers.Contract(
-            loanBankAddress,
-            loanBankABI,
-            signer
-          );
-
-          setLandRegistry(landRegistryContract);
-          setLoanBank(loanBankContract);
-
-          const ownerAddress = await landRegistryContract.owner();
-          setGovOfficer(ownerAddress);
-          showMessage("Connected to blockchain system successfully", "success");
-        } catch (error) {
-          console.error("Error loading blockchain data:", error);
-          showMessage("Error connecting to blockchain. Please check your MetaMask connection.", "error");
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
-        showMessage("Please install MetaMask to access services", "error");
-      }
-    }
-    loadBlockchainData();
-  }, []);
-
-  // ---------------------------------------------
-  // Helper: Show Message
-  // ---------------------------------------------
-  function showMessage(msg, type = "info") {
-    setMessage(msg);
-    setMessageType(type);
-    if (type !== "error") {
-      setTimeout(() => {
-        setMessage("");
-        setMessageType("");
-      }, 5000);
-    }
-  }
-
-  // ---------------------------------------------
-  // Handlers for Functional Requirements
-  // ---------------------------------------------
-
-  // Land Registration
-  async function handleRegisterLand(e) {
-    e.preventDefault();
-    setIsLoading(true);
-    try {
-      const plotId = parseInt(regPlotId, 10);
-      const enhancedMetadata = JSON.stringify({
-        description: regMetadata,
-        registrationDate: new Date().toISOString(),
-      });
-
-      const result = await registerLand(plotId, enhancedMetadata, regOwner);
-      console.log("Backend logging result:", result);
-
-      showMessage(`Land registered successfully! TX Hash: ${result.txHash}`, "success");
-      setRegPlotId("");
-      setRegMetadata("");
-      setRegOwner("");
-    } catch (error) {
-      console.error("Error during registration:", error);
-      showMessage("Land registration failed. Only authorized Government Officers can register property.", "error");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  // Loan Application
-  async function handleApplyForLoan(e) {
-    e.preventDefault();
-    setIsLoading(true);
-    try {
-      const principal = parseInt(loanPrincipal, 10);
-      const interestRate = parseFloat(loanInterest);
-
-      const result = await applyLoan(principal, interestRate, loanDeveloperAddress);
-      console.log("Backend logging result:", result);
-
-      showMessage(`Loan applied successfully! TX Hash: ${result.txHash}`, "success");
-      setLoanPrincipal("");
-      setLoanInterest("");
-      setLoanDeveloperAddress("");
-    } catch (error) {
-      console.error(error);
-      showMessage("Loan application failed. Please check your eligibility and try again.", "error");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  // Loan Repayment
-  async function handleRepayLoan(e) {
-    e.preventDefault();
-    setIsLoading(true);
-    try {
-      const amount = parseInt(repayAmount, 10);
-
-      const result = await repayLoan(0, amount, repayDeveloperAddress); // Assuming loanIndex is 0
-      console.log("Repayment result:", result);
-
-      showMessage(`Loan repaid successfully! TX Hash: ${result.txHash}`, "success");
-      setRepayAmount("");
-      setRepayDeveloperAddress("");
-    } catch (error) {
-      console.error(error);
-      showMessage("Loan repayment failed. Please check your account balance.", "error");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  // ---------------------------------------------
-  // Main Render
-  // ---------------------------------------------
-  return (
-    <div>
-      {/* Background Image */}
-      <div style={backgroundStyle}></div>
-
-      {/* Main Content */}
-      <div style={containerStyle}>
-        <h1 style={headerStyle}>Land and Loan Management System</h1>
-
-        {/* Display connection status */}
-        {account ? (
-          <p style={{ textAlign: "center", color: "#4caf50" }}>Connected Account: {account}</p>
-        ) : (
-          <p style={{ textAlign: "center", color: "#f44336" }}>Not connected to MetaMask</p>
-        )}
-
-        {/* Display messages */}
-        {message && (
-          <div style={messageStyle(messageType)}>
-            {message}
-          </div>
-        )}
-
-        {/* Land Registration Form */}
-        <div style={formStyle}>
-          <h2>Land Registration</h2>
-          <form onSubmit={handleRegisterLand}>
-            <input
-              type="number"
-              placeholder="Plot ID"
-              value={regPlotId}
-              onChange={(e) => setRegPlotId(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <input
-              type="text"
-              placeholder="Metadata"
-              value={regMetadata}
-              onChange={(e) => setRegMetadata(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <input
-              type="text"
-              placeholder="Owner Address"
-              value={regOwner}
-              onChange={(e) => setRegOwner(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <button type="submit" style={buttonStyle}>
-              Register Land
-            </button>
-          </form>
-        </div>
-
-        {/* Loan Application Form */}
-        <div style={formStyle}>
-          <h2>Loan Application</h2>
-          <form onSubmit={handleApplyForLoan}>
-            <input
-              type="number"
-              placeholder="Principal"
-              value={loanPrincipal}
-              onChange={(e) => setLoanPrincipal(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <input
-              type="number"
-              step="0.1"
-              placeholder="Interest Rate"
-              value={loanInterest}
-              onChange={(e) => setLoanInterest(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <input
-              type="text"
-              placeholder="Developer Address"
-              value={loanDeveloperAddress}
-              onChange={(e) => setLoanDeveloperAddress(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <button type="submit" style={buttonStyle}>
-              Apply for Loan
-            </button>
-          </form>
-        </div>
-
-        {/* Loan Repayment Form */}
-        <div style={formStyle}>
-          <h2>Loan Repayment</h2>
-          <form onSubmit={handleRepayLoan}>
-            <input
-              type="number"
-              placeholder="Repayment Amount"
-              value={repayAmount}
-              onChange={(e) => setRepayAmount(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <input
-              type="text"
-              placeholder="Developer Address"
-              value={repayDeveloperAddress}
-              onChange={(e) => setRepayDeveloperAddress(e.target.value)}
-              style={inputStyle}
-              required
-            />
-            <button type="submit" style={buttonStyle}>
-              Repay Loan
-            </button>
-          </form>
-        </div>
-
-        {/* Loading Overlay */}
-        {isLoading && (
-          <div style={loadingOverlayStyle}>
-            <div style={spinnerStyle}></div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export default App;
-
-/*
-import React, { useState, useEffect } from "react";
-import { ethers } from "ethers";
-import LandRegistryData from "./contracts/LandRegistry.json";
-import LoanBankData from "./contracts/LoanBank.json";
-import { registerLand } from './services/landRegistryServices';
 import { applyLoan } from './services/loanBankService';
 import { fetchLoansForAccount } from './services/loanBankService';
 import {fetchAllLoans} from './services/loanBankService';
 import {repayLoan} from './services/loanBankService';
-
+import { checkDefault} from "./services/loanBankService";
+import { ContractMissingDeployDataError } from "web3";
 
 // Extract ABIs from JSON artifacts
 const landRegistryABI = LandRegistryData.abi;
 const loanBankABI = LoanBankData.abi;
 
-// Smart contract addresses
-const landRegistryAddress = "0x74aF28Bc42C3967b00d72c59053F144207503607";
-const loanBankAddress = "0x690c17B342043aC5682979D0a40f6ba6AE6d2Ca6";
+// Get network ID from the current provider 
+let landRegistryAddress = "";
+let loanBankAddress = "";
+
+// // Smart contract addresses
+// const landRegistryAddress = "0x74aF28Bc42C3967b00d72c59053F144207503607";
+// const loanBankAddress = "0x690c17B342043aC5682979D0a40f6ba6AE6d2Ca6";
+
+async function getContractAddresses() {
+  const provider = new ethers.providers.Web3Provider(window.ethereum || "http://127.0.0.1:7545");
+  const network = await provider.getNetwork();
+  const networkId = network.chainId.toString();
+  console.log("Detected network ID:",networkId);
+
+  const landRegistryNetwork = LandRegistryData.networks[networkId];
+  const loanBankNetwork = LoanBankData.networks[networkId];
+
+  landRegistryAddress = landRegistryNetwork?.address;
+  loanBankAddress = loanBankNetwork?.address;
+
+  if (!landRegistryAddress || !loanBankAddress) {
+    throw new Error("Smart contracts are not deployed on the connected network");
+  }
+
+  return { provider, networkId };
+}
+
 
 // Styling Objects (Define these outside or at the top of your component)
 const containerStyle = {
@@ -667,7 +288,7 @@ function App() {
       if (window.ethereum) {
         setIsLoading(true);
         try {
-          const provider = new ethers.providers.Web3Provider(window.ethereum);
+          const { provider } = await getContractAddresses();
           await window.ethereum.request({ method: "eth_requestAccounts" });
           const signer = provider.getSigner();
           const account = await signer.getAddress();
@@ -734,43 +355,24 @@ function App() {
     try {
       if (!defaultCheckAddress) {
         showMessage("Please enter a developer address.", "error");
-        setIsLoading(false);
         return;
       }
   
-      // Check loans in the smart contract
-      const fetchedLoans = await fetchLoansForAccount(defaultCheckAddress);
-      if (fetchedLoans.length === 0) {
-        showMessage("No loans found for this developer address.", "error");
-        setIsLoading(false);
-        return;
-      }
-  
-      let defaultedLoanIndex = -1;
-      for (let i = 0; i < fetchedLoans.length; i++) {
-        if (fetchedLoans[i].isActive && fetchedLoans[i].balance > 0) {
-          // Found a loan that can be defaulted
-          defaultedLoanIndex = i;
-          break;
-        }
-      }
-  
-      if (defaultedLoanIndex === -1) {
-        showMessage("No defaulted loans found for this developer.", "success");
-        setDefaultCheckResult("No defaulted loans.");
-        setIsLoading(false);
-        return;
-      }
-  
-      // Call the smart contract function to check for default
-      const tx = await loanBank.checkDefault(defaultCheckAddress, defaultedLoanIndex);
-      await tx.wait();
+      // Call the service function which handles everything (fetch + checkDefault)
+      // Instead of assuming borrower == developer:
+
+      const result = await checkDefault(defaultCheckAddress);
   
       showMessage("Loan default check completed. Notifications sent if applicable.", "success");
-      setDefaultCheckResult(`Defaulted loan at index ${defaultedLoanIndex}.`);
+      setDefaultCheckResult("Defaulted loan verified.");
     } catch (error) {
       console.error("Error checking loan default:", error);
-      showMessage("Loan default check failed. Please try again.", "error");
+      if (error.message.includes("No active loan")) {
+        showMessage("No defaulted loans found for this developer.", "success");
+        setDefaultCheckResult("No defaulted loans.");
+      } else {
+        showMessage("Loan default check failed. Please try again.", "error");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -901,9 +503,23 @@ function App() {
       const fetchedLoans = await fetchLoansForAccount(repayDeveloperAddress);
       console.log("Fetched loans:", fetchedLoans);
       // Find the first active loan for that address
-      const activeLoanIndex = fetchedLoans.findIndex((loan) => loan.isActive);
+      const activeLoan = fetchedLoans.find((loan) => loan.isActive);
+      console.log("🔍 Active loan found:", activeLoan);
+      if (!activeLoan) {
+        showMessage("No active loan found for this developer address.", "error");
+        setIsLoading(false);
+        return;
+      }
+
+      const activeLoanIndex = Number(activeLoan?.loanIndex);
+      console.log("🎯 Extracted loanIndex:", activeLoan.loanIndex, "→", activeLoanIndex);
+
       if (activeLoanIndex === -1) {
         showMessage("No active loan found for this developer address.", "error");
+        console.log("Fetched loans:", fetchedLoans);
+        fetchedLoans.forEach((loan, i) => {
+        console.log(`Loan ${i}:`, loan);
+      });
         setIsLoading(false);
         return;
       }
@@ -1006,7 +622,7 @@ function App() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={{ border: "1px solid #ddd", padding: "8px" }}>Developer Address</th>
+                <th style={{ border: "1px solid #ddd", padding: "8px" }}>Bank Address</th>
                 <th style={{ border: "1px solid #ddd", padding: "8px" }}>Principal (SGD)</th>
                 <th style={{ border: "1px solid #ddd", padding: "8px" }}>Interest Rate (%)</th>
                 <th style={{ border: "1px solid #ddd", padding: "8px" }}>Outstanding Balance</th>
@@ -1109,12 +725,12 @@ function App() {
         </p>
         <form onSubmit={handleRepayLoan}>
           <div style={formGroupStyle}>
-            <label style={labelStyle}>Developer Address</label>
+            <label style={labelStyle}>Bank Address</label>
             <input
               type="text"
               value={repayDeveloperAddress}
               onChange={(e) => setRepayDeveloperAddress(e.target.value)}
-              placeholder="Enter Developer Address"
+              placeholder="Enter Bank Address"
               style={inputStyle}
               required
             />
@@ -1315,7 +931,7 @@ function App() {
             </small>
           </div>
           <div style={formGroupStyle}>
-            <label style={labelStyle}>Developer Address</label>
+            <label style={labelStyle}>Bank Address</label>
             <input
               type="text"
               value={loanDeveloperAddress}
@@ -1453,5 +1069,3 @@ function renderDefaultCheck() {
 }
 
 export default App;
-
-*/

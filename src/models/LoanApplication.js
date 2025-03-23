@@ -12,8 +12,9 @@ const LoanApplicationSchema = new mongoose.Schema({
   txHash: String,
   ethTopUp: String,
   loanDeveloperAddress: String,
+  loanIndex: Number,        // Add loanIndex for contract-level identification
+  borrowerAddress: String,
   date: { type: Date, default: Date.now },
 });
 
 module.exports = mongoose.model('LoanApplication', LoanApplicationSchema);
-

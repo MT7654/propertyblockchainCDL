@@ -79,4 +79,13 @@ contract LoanBank {
             emit DeveloperDefaulted(borrower, loanIndex);
         }
     }
+
+    /**
+    * @notice Get the total number of loans for a borrower.
+    * @param borrower The address of the borrower.
+    * @return The number of loans.
+    */
+    function getLoanCount(address borrower) public view returns (uint256) {
+       return loans[borrower].length;
+    }
 }

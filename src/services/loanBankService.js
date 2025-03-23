@@ -1,58 +1,94 @@
 import { ethers } from 'ethers';
 import LoanBankData from "../contracts/LoanBank.json";
 
-const loanBankABI = LoanBankData.abi;
-const loanBankAddress = "0x690c17B342043aC5682979D0a40f6ba6AE6d2Ca6";
+const provider = new ethers.providers.Web3Provider(window.ethereum || "http://127.0.0.1:7545");
 
-const provider = new ethers.providers.Web3Provider(window.ethereum);
-const signer = provider.getSigner();
-const loanBankContract = new ethers.Contract(loanBankAddress, loanBankABI, signer);
+let loanBankContract = null;
 
-/**
- * Apply for a new loan.
- * @param {number} principal - The loan principal.
- * @param {number} interestRate - The interest rate.
- * @param {string} loanDeveloperAddress - The developer's address (for logging only).
- * @returns {object} - An object containing the transaction hash and loan details.
- */
-export async function applyLoan(principal, interestRate, loanDeveloperAddress) {
-  // Forward the loan application to the Public Bank then invoke createLoan on LoanBank.
-  const tx = await loanBankContract.createLoan(principal, interestRate);
-  await tx.wait(); // Wait for the LoanCreated event.
-  const ethTopUp = "0.1 ETH";
+// Dynamically load contract from artifact based on connected network
+async function getLoanBankContract() {
+  if (loanBankContract) return loanBankContract;
 
-  // The new loan's starting balance is equal to the principal, and it's active.
-  const balance = principal;
-  const isActive = true;
+  const network = await provider.getNetwork();
+  const networkId = network.chainId.toString();
+  const contractAddress = LoanBankData.networks[networkId]?.address;
 
-  // Log the loan application to MongoDB via your backend API.
-  await fetch('http://localhost:5001/api/loan-application', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      principal,
-      interestRate,
-      balance: principal,
-      isActive: true,
-      txHash: tx.hash,
-      ethTopUp,
-      loanDeveloperAddress,
-    }),
-  });
-  return { txHash: tx.hash, principal, interestRate, ethTopUp };
+  if (!contractAddress) {
+    throw new Error(`LoanBank contract not found for network ID ${networkId}`);
+  }
+
+  const signer = provider.getSigner();
+  loanBankContract = new ethers.Contract(contractAddress, LoanBankData.abi, signer);
+  return loanBankContract;
 }
 
-/**
- * Repay a specific loan.
- * @param {number} loanIndex - The index of the loan to repay.
- * @param {number} repaymentAmount - The amount to repay.
- * @returns {object} - An object containing the transaction hash and new balance (if retrievable).
- */
+export async function applyLoan(principal, interestRate, loanDeveloperAddress) {
+  const contract = await getLoanBankContract();
+  const signer = await contract.signer.getAddress();
+
+  try {
+    // 1. Create loan on-chain
+    const tx = await contract.createLoan(principal, interestRate);
+    const receipt = await tx.wait();
+
+    // 2. Parse LoanCreated event
+    const loanCreatedEvent = receipt.events?.find((e) => e.event === "LoanCreated");
+
+    if (!loanCreatedEvent || !loanCreatedEvent.args) {
+      throw new Error("LoanCreated event not found or invalid");
+    }
+
+    const loanIndex = loanCreatedEvent.args.loanIndex?.toNumber();
+    console.log("Captured loan index from event:", loanIndex);
+
+
+    if (loanIndex === undefined || isNaN(loanIndex)) {
+      throw new Error("Invalid loan index returned from LoanCreated event");
+    }
+
+    // 3. Log to MongoDB only after success
+    const ethTopUp = "0.1 ETH";
+    const balance = principal;
+    const isActive = true;
+
+    const response = await fetch("http://localhost:5001/api/loan-application", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        principal,
+        interestRate,
+        balance,
+        isActive,
+        txHash: tx.hash,
+        ethTopUp,
+        loanDeveloperAddress,
+        loanIndex,
+        borrowerAddress: signer,
+      }),
+    });
+
+    if (!response.ok) {
+      const msg = await response.text();
+      console.error("MongoDB logging failed:", msg);
+      throw new Error("Loan created but failed to log to database");
+    }
+
+    return { txHash: tx.hash, principal, interestRate, ethTopUp, loanIndex };
+
+  } catch (error) {
+    console.error("Error applying for loan:", error);
+    throw error; // rethrow so calling function can handle it
+  }
+}
+
+
 export async function repayLoan(loanIndex, repaymentAmount, developerAddress) {
   try {
+    const contract = await getLoanBankContract();
+
     console.log("Initiating loan repayment:", { loanIndex, repaymentAmount });
 
-    const tx = await loanBankContract.repayLoan(loanIndex, repaymentAmount);
+    const tx = await contract.repayLoan(loanIndex, repaymentAmount);
     console.log("Transaction sent:", tx.hash);
 
     const receipt = await tx.wait();
@@ -65,8 +101,6 @@ export async function repayLoan(loanIndex, repaymentAmount, developerAddress) {
 
     const newBalance = loanRepaidEvent.args.remainingBalance.toString();
     const isActive = newBalance !== "0";
-
-    console.log("Updating loan:", { developerAddress, newBalance, isActive });
 
     const response = await fetch('http://127.0.0.1:5001/api/loan-application/update', {
       method: 'PUT',
@@ -93,28 +127,66 @@ export async function repayLoan(loanIndex, repaymentAmount, developerAddress) {
   }
 }
 
+export async function checkDefault(borrowerAddress) {
+  const contract = await getLoanBankContract();
 
+  // Fetch on-chain loan count
+  const loanCountBN = await contract.getLoanCount(borrowerAddress);
+  const loanCount = loanCountBN.toNumber();
+  console.log("✅ On-chain loan count for", borrowerAddress, ":", loanCount);
 
-/**
- * Check for default on a specific loan.
- * @param {string} borrower - The borrower's address.
- * @param {number} loanIndex - The index of the loan to check.
- * @returns {object} - An object indicating whether the loan is defaulted.
- */
-export async function checkDefault(borrower, loanIndex) {
-  // Call the checkDefault function with both borrower and loan index.
-  const tx = await loanBankContract.checkDefault(borrower, loanIndex);
+  if (loanCount === 0) {
+    throw new Error("No loans found for this borrower on-chain.");
+  }
+
+  // Fetch loans for this borrower from backend
+  const response = await fetch(`http://localhost:5001/api/bloans?account=${borrowerAddress}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch loans from backend");
+  }
+
+  const loans = await response.json();
+  console.log("🔍 Backend loans:", loans);
+
+  for (const loan of loans) {
+    console.log("🔎 Checking loan:");
+    console.log("• isActive:", loan.isActive);
+    console.log("• balance:", loan.balance);
+    console.log("• loanIndex:", loan.loanIndex);
+    console.log("• borrowerAddress:", loan.borrowerAddress);
+    console.log("• borrower match:", loan.borrowerAddress?.toLowerCase() === borrowerAddress.toLowerCase());
+    console.log("• index valid:", Number(loan.loanIndex) < loanCount);
+  }
+
+  // Find the active loan with a valid index
+  const activeLoan = loans.find(
+    (loan) =>
+      loan.isActive === true &&
+      Number(loan.balance) > 0 &&
+      loan.loanIndex !== undefined &&
+      Number(loan.loanIndex) < loanCount &&
+      loan.borrowerAddress?.toLowerCase() === borrowerAddress.toLowerCase()
+  );
+
+  if (!activeLoan) {
+    throw new Error("No active loan with a valid index found for this borrower.");
+  }
+
+  const loanIndex = Number(activeLoan.loanIndex);
+
+  console.log("Using loan index:", loanIndex);
+
+  // Interact with smart contract
+  const tx = await contract.checkDefault(borrowerAddress, loanIndex);
   await tx.wait();
-  // For demonstration, assume checkDefault returns a default event.
-  return { defaulted: true }; // In practice, extract this from an event or a view call.
+
+  return {
+    defaulted: true,
+    loanIndex,
+    txHash: tx.hash
+  };
 }
 
-/**
- * Simulate sending the loan application to the Public Bank for approval.
- * @param {number} principal
- * @param {number} interestRate
- * @returns {Promise<object>} - A promise that resolves with an approval result.
- */
 export async function requestBankApproval(principal, interestRate) {
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -123,17 +195,11 @@ export async function requestBankApproval(principal, interestRate) {
   });
 }
 
-// ---------------------------------------------
-  // Fetch Loans from database
-  // ---------------------------------------------
 export async function fetchLoansForAccount(account) {
   try {
     const response = await fetch(`http://localhost:5001/api/loans?account=${account}`);
-    if (!response.ok) {
-      throw new Error(response.statusText);
-    }
-    const data = await response.json();
-    return data; // Return the fetched loans
+    if (!response.ok) throw new Error(response.statusText);
+    return await response.json();
   } catch (error) {
     console.error("Error in fetchLoansForAccount:", error);
     throw error;
@@ -143,13 +209,11 @@ export async function fetchLoansForAccount(account) {
 export async function fetchAllLoans() {
   try {
     const response = await fetch(`http://localhost:5001/api/all-loans`);
-    if (!response.ok) {
-      throw new Error(response.statusText);
-    }
-    const data = await response.json();
-    return data; // Return the fetched loans
+    if (!response.ok) throw new Error(response.statusText);
+    return await response.json();
   } catch (error) {
     console.error("Error in fetchAllLoans:", error);
     throw error;
   }
+  
 }
