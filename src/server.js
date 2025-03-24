@@ -113,17 +113,29 @@ app.get('/api/loans', async (req, res) => {
   }
 });
 
-// Express route to fetch all loans from the database
+// Updated route to fetch all loans with corresponding land metadata
 app.get('/api/all-loans', async (req, res) => {
   try {
-    // Assume LoanApplication is your Mongoose model
     const loans = await LoanApplication.find();
-    res.status(200).json(loans);
+
+    const enrichedLoans = await Promise.all(
+      loans.map(async (loan) => {
+        const land = await LandRegistration.findOne({ ownerDetails: loan.borrowerAddress });
+        return {
+          ...loan.toObject(),
+          plotId: land?.plotId || null,
+          landMetadata: land?.metadata || null
+        };
+      })
+    );
+
+    res.status(200).json(enrichedLoans);
   } catch (error) {
-    console.error("Error fetching all loans:", error);
+    console.error("Error fetching all loans with land data:", error);
     res.status(500).json({ error: error.message });
   }
 });
+
 
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

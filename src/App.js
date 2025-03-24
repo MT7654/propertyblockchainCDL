@@ -180,6 +180,126 @@ const userGroupStyle = {
   fontSize: "16px"
 };
 
+const tableStyles = {
+  container: {
+    marginBottom: "30px",
+    fontFamily: "Arial, sans-serif"
+  },
+  heading: {
+    fontSize: "22px",
+    fontWeight: "600",
+    marginBottom: "16px",
+    color: "#333"
+  },
+  emptyState: {
+    padding: "24px",
+    textAlign: "center",
+    backgroundColor: "#f8f9fa",
+    border: "1px solid #dee2e6",
+    borderRadius: "8px",
+    color: "#6c757d"
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
+    borderRadius: "8px",
+    overflow: "hidden"
+  },
+  tableHeader: {
+    backgroundColor: "#f2f2f2"
+  },
+  tableHeaderCell: {
+    border: "1px solid #ddd",
+    padding: "12px 16px",
+    textAlign: "left",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#555",
+    textTransform: "uppercase"
+  },
+  tableRow: (index) => ({
+    backgroundColor: index % 2 === 0 ? "#ffffff" : "#f8f9fa"
+  }),
+  tableCell: {
+    border: "1px solid #ddd",
+    padding: "12px 16px",
+    fontSize: "14px",
+    color: "#333"
+  },
+  activeStatus: {
+    display: "inline-block",
+    padding: "4px 8px",
+    borderRadius: "16px",
+    backgroundColor: "#e6f7ed",
+    color: "#198754",
+    fontWeight: "600",
+    fontSize: "13px"
+  },
+  repaidStatus: {
+    display: "inline-block",
+    padding: "4px 8px",
+    borderRadius: "16px",
+    backgroundColor: "#f0f0f0",
+    color: "#666",
+    fontWeight: "600",
+    fontSize: "13px"
+  },
+  metadataContainer: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px"
+  },
+  metadataLine: {
+    display: "flex",
+    fontSize: "14px"
+  },
+  metadataLabel: {
+    fontWeight: "600",
+    width: "100px",
+    display: "inline-block"
+  },
+  metadataValue: {
+    flex: 1
+  },
+  noMetadata: {
+    fontStyle: "italic",
+    color: "#6c757d"
+  },
+  pageContainer: {
+    padding: "24px",
+    maxWidth: "100%",
+    backgroundColor: "#f5f5f5",
+    minHeight: "100vh"
+  },
+  content: {
+    maxWidth: "1200px",
+    margin: "0 auto"
+  },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "24px"
+  },
+  pageTitle: {
+    fontSize: "28px",
+    fontWeight: "bold",
+    color: "#333"
+  },
+  button: {
+    padding: "8px 16px",
+    backgroundColor: "#4a6cf7",
+    color: "white",
+    border: "none",
+    borderRadius: "4px",
+    cursor: "pointer",
+    fontSize: "14px",
+    fontWeight: "500",
+    transition: "background-color 0.2s"
+  }
+};
+
 // SingaporeHDBBackground Component
 const SingaporeHDBBackground = () => (
   <svg 
@@ -611,42 +731,87 @@ function App() {
     );
   }
 
-  // Render Existing Loans Section
   function renderLoans() {
     return (
-      <div style={{ marginBottom: "30px" }}>
-        <h3>Your Loans</h3>
+      <div style={tableStyles.container}>
+        <h3 style={tableStyles.heading}>Your Loans</h3>
         {loans.length === 0 ? (
-          <p>No loans found.</p>
+          <div style={tableStyles.emptyState}>
+            <p>No loans found.</p>
+          </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
+          <table style={tableStyles.table}>
+            <thead style={tableStyles.tableHeader}>
               <tr>
-                <th style={{ border: "1px solid #ddd", padding: "8px" }}>Bank Address</th>
-                <th style={{ border: "1px solid #ddd", padding: "8px" }}>Principal (SGD)</th>
-                <th style={{ border: "1px solid #ddd", padding: "8px" }}>Interest Rate (%)</th>
-                <th style={{ border: "1px solid #ddd", padding: "8px" }}>Outstanding Balance</th>
-                <th style={{ border: "1px solid #ddd", padding: "8px" }}>Status</th>
+                <th style={tableStyles.tableHeaderCell}>Bank Address</th>
+                <th style={tableStyles.tableHeaderCell}>Principal (SGD)</th>
+                <th style={tableStyles.tableHeaderCell}>Interest Rate (%)</th>
+                <th style={tableStyles.tableHeaderCell}>Outstanding Balance</th>
+                <th style={tableStyles.tableHeaderCell}>Status</th>
+                <th style={tableStyles.tableHeaderCell}>Plot ID</th>
+                <th style={tableStyles.tableHeaderCell}>Land Metadata</th>
               </tr>
             </thead>
             <tbody>
-              {loans.map((loan, index) => (
-                <tr key={index}>
-                  <td style={{ border: "1px solid #ddd", padding: "8px" }}>{loan.loanDeveloperAddress}</td>
-                  <td style={{ border: "1px solid #ddd", padding: "8px" }}>{loan.principal}</td>
-                  <td style={{ border: "1px solid #ddd", padding: "8px" }}>{loan.interestRate}</td>
-                  <td style={{ border: "1px solid #ddd", padding: "8px" }}>{loan.balance}</td>
-                  <td style={{ border: "1px solid #ddd", padding: "8px" }}>
-                    {loan.isActive ? "Active" : "Repaid"}
-                  </td>
-                </tr>
-              ))}
+              {loans.map((loan, index) => {
+                // Attempt to parse metadata if it's a JSON string
+                let parsedMetadata = {};
+                try {
+                  parsedMetadata = loan.landMetadata ? JSON.parse(loan.landMetadata) : {};
+                } catch (e) {
+                  console.warn("Failed to parse land metadata", e);
+                }
+
+                return (
+                  <tr key={index} style={tableStyles.tableRow(index)}>
+                    <td style={tableStyles.tableCell}>{loan.loanDeveloperAddress}</td>
+                    <td style={tableStyles.tableCell}>{loan.principal}</td>
+                    <td style={tableStyles.tableCell}>{loan.interestRate}</td>
+                    <td style={tableStyles.tableCell}>{loan.balance}</td>
+                    <td style={tableStyles.tableCell}>
+                      {loan.isActive ? (
+                        <span style={tableStyles.activeStatus}>Active</span>
+                      ) : (
+                        <span style={tableStyles.repaidStatus}>Repaid</span>
+                      )}
+                    </td>
+                    <td style={tableStyles.tableCell}>{loan.plotId || "N/A"}</td>
+                    <td style={tableStyles.tableCell}>
+                      {parsedMetadata.description ? (
+                        <div style={tableStyles.metadataContainer}>
+                          <div style={tableStyles.metadataLine}>
+                            <span style={tableStyles.metadataLabel}>Description:</span>
+                            <span style={tableStyles.metadataValue}>{parsedMetadata.description}</span>
+                          </div>
+                          <div style={tableStyles.metadataLine}>
+                            <span style={tableStyles.metadataLabel}>Town:</span>
+                            <span style={tableStyles.metadataValue}>{parsedMetadata.town}</span>
+                          </div>
+                          <div style={tableStyles.metadataLine}>
+                            <span style={tableStyles.metadataLabel}>Type:</span>
+                            <span style={tableStyles.metadataValue}>{parsedMetadata.flatType}</span>
+                          </div>
+                          <div style={tableStyles.metadataLine}>
+                            <span style={tableStyles.metadataLabel}>Registered:</span>
+                            <span style={tableStyles.metadataValue}>
+                              {new Date(parsedMetadata.registrationDate).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={tableStyles.noMetadata}>No Metadata</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </div>
     );
   }
+  
 
   // Render Page Content Based on Current Tab
   function renderPageContent() {
