@@ -22,7 +22,7 @@ async function getLoanBankContract() {
   return loanBankContract;
 }
 
-export async function applyLoan(principal, interestRate, loanDeveloperAddress) {
+export async function applyLoan(principal, interestRate, loanDeveloperAddress,  plotId) {
   const contract = await getLoanBankContract();
   const signer = await contract.signer.getAddress();
 
@@ -64,6 +64,7 @@ export async function applyLoan(principal, interestRate, loanDeveloperAddress) {
         loanDeveloperAddress,
         loanIndex,
         borrowerAddress: signer,
+        plotId,
       }),
     });
 

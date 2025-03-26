@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 
+const path = require('path');
+
 // Import models
 const LandRegistration = require('./models/LandRegistration');
 const LoanApplication = require('./models/LoanApplication');
@@ -12,6 +14,12 @@ const LoanApplication = require('./models/LoanApplication');
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(bodyParser.json());
+
+// Serve metadata
+app.use('/metadata', express.static(path.join(__dirname, 'metadata')));
+
+// Serve images
+app.use('/images', express.static(path.join(__dirname, 'images')));
 
 // Connect to MongoDB (adjust connection string as needed)
 mongoose.connect('mongodb://localhost:27017/landsystem', {
@@ -114,16 +122,39 @@ app.get('/api/loans', async (req, res) => {
 });
 
 // Updated route to fetch all loans with corresponding land metadata
+// app.get('/api/all-loans', async (req, res) => {
+//   try {
+//     const loans = await LoanApplication.find();
+
+//     const enrichedLoans = await Promise.all(
+//       loans.map(async (loan) => {
+//         const land = await LandRegistration.findOne({ ownerDetails: loan.borrowerAddress });
+//         return {
+//           ...loan.toObject(),
+//           plotId: land?.plotId || null,
+//           landMetadata: land?.metadata || null
+//         };
+//       })
+//     );
+
+//     res.status(200).json(enrichedLoans);
+//   } catch (error) {
+//     console.error("Error fetching all loans with land data:", error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
+// Updated route to fetch all loans with corresponding land metadata
 app.get('/api/all-loans', async (req, res) => {
   try {
     const loans = await LoanApplication.find();
 
     const enrichedLoans = await Promise.all(
       loans.map(async (loan) => {
-        const land = await LandRegistration.findOne({ ownerDetails: loan.borrowerAddress });
+        const land = await LandRegistration.findOne({ plotId: loan.plotId });
         return {
           ...loan.toObject(),
-          plotId: land?.plotId || null,
+          plotId: land?.plotId || loan.plotId || null,
           landMetadata: land?.metadata || null
         };
       })
@@ -135,6 +166,7 @@ app.get('/api/all-loans', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 
 
 const PORT = process.env.PORT || 5001;

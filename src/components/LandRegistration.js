@@ -6,10 +6,19 @@ function LandRegistration() {
   const [metadata, setMetadata] = useState('');
   const [ownerDetails, setOwnerDetails] = useState('');
   const [message, setMessage] = useState('');
+  const [tokenId, setTokenId] = useState(null);
 
   const handleRegister = async () => {
     try {
       const result = await registerLand(plotId, metadata, ownerDetails);
+      console.log("Transaction submitted with hash:", tx.hash);
+      const receipt = await tx.wait();
+      console.log("🔍 Events in receipt:", receipt.events);
+      console.log("Transaction confirmed:", tx.hash);
+
+     // Extract tokenId from the LandRegistered event
+      const landRegisteredEvent = receipt.events.find((e) => e.event === "LandRegistered");
+      const tokenId = landRegisteredEvent?.args?.tokenId?.toString();
       // On success, notify the government officer and provide the NFT token.
       setMessage(`Land registered successfully. NFT Token: ${result.nftToken}`);
     } catch (error) {

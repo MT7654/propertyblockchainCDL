@@ -338,7 +338,10 @@ function App() {
   // USER GROUP STATE: "governmentOfficer", "developer", "bank"
   // ---------------------------
 
-  const [userGroup, setUserGroup] = useState("developer");
+  const [userGroup, setUserGroup] = useState(() => {
+    return localStorage.getItem("userGroup") || "developer";
+  });
+  
 
   // Blockchain state
   const [account, setAccount] = useState(null);
@@ -369,6 +372,8 @@ function App() {
   // Form state for Land Purchase (FR3)
   const [purchasePlotId, setPurchasePlotId] = useState("");
   const [purchasePrice, setPurchasePrice] = useState("");
+  const [ownedPlotId, setOwnedPlotId] = useState(null);
+
 
   // Form state for Loan Repayment (FR4)
   const [repayAmount, setRepayAmount] = useState("");
@@ -381,10 +386,18 @@ function App() {
   // State for default check
   const [defaultCheckAddress, setDefaultCheckAddress] = useState("");
   const [defaultCheckResult, setDefaultCheckResult] = useState("");
+  const [highlightedDeveloper, setHighlightedDeveloper] = useState("");
+
 
   // Navigation state
-  const [currentPage, setCurrentPage] = useState("landRegistration");
+  const [currentPage, setCurrentPage] = useState(() => {
+    return localStorage.getItem("currentPage") || "landRegistration";
+  });  
   const [isLoading, setIsLoading] = useState(false);
+
+  // Display NFT
+  const [nftImageUrl, setNftImageUrl] = useState(null);
+  const [pnftImageUrl, setpNftImageUrl] = useState(null);
 
   // HDB towns and types
   const hdbTowns = [
@@ -483,7 +496,9 @@ function App() {
 
       const result = await checkDefault(defaultCheckAddress);
   
-      showMessage("Loan default check completed. Notifications sent if applicable.", "success");
+      showMessage("Loan default check completed. Notifications sent", "success");
+      setHighlightedDeveloper(defaultCheckAddress); // highlight that developer's row
+      localStorage.setItem("highlightedDeveloper", defaultCheckAddress);
       setDefaultCheckResult("Defaulted loan verified.");
     } catch (error) {
       console.error("Error checking loan default:", error);
@@ -533,6 +548,10 @@ function App() {
       console.log("Enhanced metadata:", enhancedMetadata);
       
       const result = await registerLand(plotId, enhancedMetadata, regOwner);
+      setMessage(`Land registered successfully. NFT Token: ${result.nftToken}`);
+      const imageUrl = `http://localhost:5001/images/plot0.png`;
+      setNftImageUrl(imageUrl);
+      console.log("NFT Image URL:", imageUrl);
       console.log("Backend logging result:", result);
       
       showMessage(`Unit ${regType} in ${regTown} registered successfully with NFT issuance`, "success");
@@ -565,7 +584,7 @@ function App() {
         developerAddress: loanDeveloperAddress,
         applicationDate: new Date().toISOString()
       });
-      const result = await applyLoan(principal, interestRate, loanDeveloperAddress);
+      const result = await applyLoan(principal, interestRate, loanDeveloperAddress, ownedPlotId);
       console.log("Backend logging result:", result);
 
       showMessage(`${loanType} loan application for $${principal} submitted successfully. Awaiting bank approval.`, "success");
@@ -594,7 +613,10 @@ function App() {
       });
       const tx = await landRegistry.purchaseLand(plotId);
       await tx.wait();
+      setOwnedPlotId(plotId);
       showMessage(`Land unit #${plotId} purchased successfully! Ownership transferred to your account.`, "success");
+      const imageUrl = `http://localhost:5001/images/plot0.png`;
+      setpNftImageUrl(imageUrl);
       setPurchasePlotId("");
       setPurchasePrice("");
     } catch (error) {
@@ -648,6 +670,8 @@ function App() {
       console.log("Repayment result:", result);
       showMessage(`Loan repayment of $${amount} via ${repaymentMethod} processed successfully!`, "success");
       setRepayAmount("");
+      setHighlightedDeveloper(null);
+      localStorage.removeItem("highlightedDeveloper");
 
       // Refresh loans after repayment
       await fetchLoans();
@@ -666,18 +690,33 @@ function App() {
   
   // Navigation Functions
   function goToNextPage() {
-    if (currentPage === "landRegistration") setCurrentPage("loanApplication");
-    else if (currentPage === "loanApplication") setCurrentPage("landPurchase");
-    else if (currentPage === "landPurchase") setCurrentPage("loanRepayment");
-    else if (currentPage === "loanRepayment") setCurrentPage("defaultCheck");
+    let nextPage = null;
+  
+    if (currentPage === "landRegistration") nextPage = "loanApplication";
+    else if (currentPage === "loanApplication") nextPage = "landPurchase";
+    else if (currentPage === "landPurchase") nextPage = "loanRepayment";
+    else if (currentPage === "loanRepayment") nextPage = "defaultCheck";
+  
+    if (nextPage) {
+      setCurrentPage(nextPage);
+      localStorage.setItem("currentPage", nextPage);
+    }
   }
-
+  
   function goToPreviousPage() {
-    if (currentPage === "defaultCheck") setCurrentPage("loanRepayment");
-    else if (currentPage === "loanRepayment") setCurrentPage("landPurchase");
-    else if (currentPage === "landPurchase") setCurrentPage("loanApplication");
-    else if (currentPage === "loanApplication") setCurrentPage("landRegistration");
+    let prevPage = null;
+  
+    if (currentPage === "defaultCheck") prevPage = "loanRepayment";
+    else if (currentPage === "loanRepayment") prevPage = "landPurchase";
+    else if (currentPage === "landPurchase") prevPage = "loanApplication";
+    else if (currentPage === "loanApplication") prevPage = "landRegistration";
+  
+    if (prevPage) {
+      setCurrentPage(prevPage);
+      localStorage.setItem("currentPage", prevPage);
+    }
   }
+  
 
   // Tabs Based on User Group
   function getAvailableTabs() {
@@ -686,8 +725,8 @@ function App() {
     }
     if (userGroup === "developer") {
       return {
-        loanApplication: "Land Loan Application",
         landPurchase: "Land Purchase",
+        loanApplication: "Land Loan Application",
         loanRepayment: "Loan Repayment"
       };
     }
@@ -703,11 +742,25 @@ function App() {
 
   useEffect(() => {
     const availableTabs = getAvailableTabs();
+    const storedPage = localStorage.getItem("currentPage");
     const keys = Object.keys(availableTabs);
-    if (keys.length > 0 && !keys.includes(currentPage)) {
+  
+    if (storedPage && keys.includes(storedPage)) {
+      setCurrentPage(storedPage);
+    } else if (keys.length > 0) {
       setCurrentPage(keys[0]);
+      localStorage.setItem("currentPage", keys[0]);
     }
   }, [userGroup]);
+  
+
+  useEffect(() => {
+    const saved = localStorage.getItem("highlightedDeveloper");
+    if (saved) {
+      setHighlightedDeveloper(saved);
+    }
+  }, []);
+  
 
 
   function renderTabs() {
@@ -722,7 +775,10 @@ function App() {
           <div
             key={page}
             style={tabStyle(currentPage === page)}
-            onClick={() => setCurrentPage(page)}
+            onClick={() => {
+              setCurrentPage(page);
+              localStorage.setItem("currentPage", page);
+            }}
           >
             {title}
           </div>
@@ -763,18 +819,34 @@ function App() {
                 }
 
                 return (
-                  <tr key={index} style={tableStyles.tableRow(index)}>
+                  <tr key={index} style={{
+                    ...tableStyles.tableRow(index),
+                    backgroundColor:
+                      loan.borrowerAddress === highlightedDeveloper
+                        ? "#fff9c4" // light yellow
+                        : tableStyles.tableRow(index).backgroundColor,
+                    border:
+                      loan.borrowerAddress === highlightedDeveloper
+                        ? "2px solid #ff9800"
+                        : undefined,
+                  }}>
                     <td style={tableStyles.tableCell}>{loan.loanDeveloperAddress}</td>
                     <td style={tableStyles.tableCell}>{loan.principal}</td>
                     <td style={tableStyles.tableCell}>{loan.interestRate}</td>
                     <td style={tableStyles.tableCell}>{loan.balance}</td>
                     <td style={tableStyles.tableCell}>
-                      {loan.isActive ? (
-                        <span style={tableStyles.activeStatus}>Active</span>
+                    {loan.isActive ? (
+                      highlightedDeveloper === loan.borrowerAddress ? (
+                        <span style={{ ...tableStyles.activeStatus, backgroundColor: "#fce4e4", color: "#c62828" }}>
+                          Defaulted
+                        </span>
                       ) : (
-                        <span style={tableStyles.repaidStatus}>Repaid</span>
-                      )}
-                    </td>
+                        <span style={tableStyles.activeStatus}>Active</span>
+                      )
+                    ) : (
+                       <span style={tableStyles.repaidStatus}>Repaid</span>
+                    )}
+                  </td>
                     <td style={tableStyles.tableCell}>{loan.plotId || "N/A"}</td>
                     <td style={tableStyles.tableCell}>
                       {parsedMetadata.description ? (
@@ -872,6 +944,16 @@ function App() {
               Make sure you have sufficient funds and approvals in place.
             </p>
           </div>
+          {pnftImageUrl && (
+            <div style={{ marginTop: "20px", textAlign: "center" }}>
+              <h4>NFT Image Preview</h4>
+              <img
+                src={pnftImageUrl}
+                alt="Registered Land NFT"
+                style={{ width: "300px", borderRadius: "12px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}
+              />
+            </div>
+          )}
           <button type="submit" style={buttonStyle}>
             Complete Purchase Transaction
           </button>
@@ -1010,6 +1092,16 @@ function App() {
                 required
               />
             </div>
+            {nftImageUrl && (
+            <div style={{ marginTop: "20px", textAlign: "center" }}>
+              <h4>NFT Image Preview</h4>
+              <img
+                src={nftImageUrl}
+                alt="Registered Land NFT"
+                style={{ width: "300px", borderRadius: "12px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}
+              />
+            </div>
+          )}
             <button type="submit" style={buttonStyle}>
               Register Land Unit & Issue NFT
             </button>
@@ -1174,7 +1266,11 @@ function renderDefaultCheck() {
             <select
               id="userGroup"
               value={userGroup}
-              onChange={(e) => setUserGroup(e.target.value)}
+              onChange={(e) => {
+                const selectedGroup = e.target.value;
+                setUserGroup(selectedGroup);
+                localStorage.setItem("userGroup", selectedGroup);
+              }}
               style={{ padding: "8px", fontSize: "16px" }}
             >
               <option value="governmentOfficer">Government Officer</option>

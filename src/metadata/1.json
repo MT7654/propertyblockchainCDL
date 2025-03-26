@@ -1,0 +1,11 @@
+{
+    "name": "Plot 1",
+    "description": "Land at Ang Mo Kio - HDB Flat",
+    "image": "http://localhost:5001/images/plot0.png", 
+    "attributes": [
+      { "trait_type": "Town", "value": "Ang Mo Kio" },
+      { "trait_type": "Flat Type", "value": "HDB" },
+      { "trait_type": "Registered", "value": "2025-03-24" }
+    ]
+  }
+  

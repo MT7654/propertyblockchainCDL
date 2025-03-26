@@ -15,6 +15,7 @@ const LoanApplicationSchema = new mongoose.Schema({
   loanIndex: Number,        // Add loanIndex for contract-level identification
   borrowerAddress: String,
   date: { type: Date, default: Date.now },
+  plotId: Number,
 });
 
 module.exports = mongoose.model('LoanApplication', LoanApplicationSchema);

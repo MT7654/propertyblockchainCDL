@@ -37,12 +37,28 @@ export async function registerLand(plotId, metadata, ownerDetails) {
   // Call registerLand on the LandRegistry smart contract.
   const tx = await landRegistryContract.registerLand(plotId, metadata, ownerDetails);
   console.log("Transaction submitted with hash:", tx.hash);
-  await tx.wait(); // FR1.3: Wait for the LandRegistered event.
+  const receipt = await tx.wait(); // FR1.3: Wait for the LandRegistered event.
   console.log("Transaction confirmed:", tx.hash);
   
   // For demonstration, assume the event returns an NFT token id.
   // In production, parse the event log from the transaction receipt.
-  const nftToken = "NFT_TOKEN_ID";
+  // Extract tokenId from the LandRegistered event
+  const landRegisteredEvent = receipt.events.find((e) => e.event === "LandRegistered");
+  const nftToken = landRegisteredEvent?.args?.tokenId?.toString();
+  let tokenURI;
+  let metadataFromURI = null;
+
+  try {
+    tokenURI = await landRegistryContract.tokenURI(nftToken);
+    console.log("Fetched tokenURI:", tokenURI);
+
+    const metadataResponse = await fetch(tokenURI);
+    metadataFromURI = await metadataResponse.json();
+    console.log("Fetched NFT metadata:", metadataFromURI);
+  } catch (err) {
+    console.error("Failed to fetch token URI or metadata:", err);
+  }
+
   
   // Log the registration details to MongoDB via your backend API.
   try {
@@ -68,7 +84,7 @@ export async function registerLand(plotId, metadata, ownerDetails) {
     console.error('Error during logging to MongoDB:', error);
   }
   
-  return { nftToken, txHash: tx.hash };
+  return { nftToken, txHash: tx.hash, tokenURI, metadata:metadataFromURI };
 }
 
 export async function approvePurchase(plotId) {

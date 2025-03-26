@@ -46,4 +46,19 @@ contract LandRegistry is ERC721, Ownable {
         lands[tokenId].currentOwner = msg.sender;
         emit LandTransferred(tokenId, _plotId, currentOwner, msg.sender);
     }
+
+    // Optional: Override tokenURI to serve metadata for each token
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        require(_exists(tokenId), "ERC721Metadata: URI query for nonexistent token");
+    
+        // For local development (Ganache), you can return a static localhost URL
+        return string(
+        abi.encodePacked(
+            "http://localhost:5001/metadata/",
+            Strings.toString(tokenId),
+            ".json"
+        )
+    );
+}
+
 }
